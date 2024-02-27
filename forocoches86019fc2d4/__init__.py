@@ -66,7 +66,7 @@ USER_AGENT_LIST = [
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.1 Safari/605.1.15',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.1 Safari/605.1.15'
 ]
-DEFAULT_OLDNESS_SECONDS = 1000
+DEFAULT_OLDNESS_SECONDS = 15*60
 DEFAULT_MAXIMUM_ITEMS = 25
 DEFAULT_MIN_POST_LENGTH = 10
 
@@ -189,12 +189,17 @@ async def request_entries_with_timeout(_url, _max_age):
             title_list = []
             first_index = True
             for entry in entries:
+                logging.info(f"reading entry {entry}")
                 if first_index:
                     first_index = False
                     continue
                 tds = entry.findChildren("td", recursive=False)
                 if re.match(TIMESTAMP_PATTERN, tds[1].text):  # matches HH:MM format
-                    if check_date_against_max_time(tds[1].text, _max_age, 2):  # respects our time window
+                    logging.info(f"retrieved timestamp {tds[1].text}")
+                    is_fresh, delay = check_date_against_max_time(tds[1].text, _max_age, 2)
+                    # respects our time window
+                    if is_fresh:
+                        logging.info("check date passed")
                         a_elements = tds[2].findChildren("a", recursive=False)
                         if len(a_elements) == 3:  # we can skip directly to the last page
                             url = a_elements[2]["href"]  # the url to the last page of the topic
@@ -203,9 +208,10 @@ async def request_entries_with_timeout(_url, _max_age):
                         title_list.append(a_elements[1].text)
                         url_list.append(url)
                     else:
-                        break  # we reached an element that is too old, those that will follow will be too old as well
+                        logging.info(f"passed due to item being too old ({delay}s)")
 
             async for item in parse_entry_for_elements(url_list, title_list, _max_age):
+                logging.info("YIELD NEW ITEM")
                 yield item
     except Exception as e:
         logging.exception("Error:" + str(e))
@@ -227,25 +233,29 @@ def convert_date_and_time_to_date_format(_date, _delay):
     # Combine the date and time strings
     datetime_str = f"{date_string} {_date}"
     # Parse the combined string into a datetime object
-    input_time = datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S") - timedelta(hours=_delay)  # convert to UTC + 0
+    input_time = datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S")
     # Convert to UTC+0 (UTC) and format to the desired string format
     formatted_time = input_time.strftime("%Y-%m-%dT%H:%M:%S.00Z")
     return formatted_time
 
 
 def check_date_against_max_time(_date, _max_age, _time_delay):
+    logging.info(f"check_date_agaist_max_time date: {_date}")
     clean_date = convert_date_and_time_to_date_format(_date, _time_delay)
+    logging.info(f"clean date is = {clean_date}")
     return check_for_max_age_with_correct_format(clean_date, _max_age)
 
 
 def check_for_max_age_with_correct_format(_date, _max_age):
     date_to_check = datetime.strptime(_date, "%Y-%m-%dT%H:%M:%S.00Z")
+    logging.info(f"date_to_check: {date_to_check}")
     now_time = datetime.strptime(datetime.strftime(datetime.now(pytz.utc), "%Y-%m-%dT%H:%M:%S.00Z"),
                                  "%Y-%m-%dT%H:%M:%S.00Z")
+    logging.info(f"now time: {now_time}")
     if (now_time - date_to_check).total_seconds() <= _max_age:
-        return True
+        return (True, (now_time - date_to_check).total_seconds())
     else:
-        return False
+        return (False, (now_time - date_to_check).total_seconds())
 
 
 async def parse_entry_for_elements(_url_list, _title_list, _max_age):
