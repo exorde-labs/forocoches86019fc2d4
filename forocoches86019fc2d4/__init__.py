@@ -233,8 +233,13 @@ def convert_date_and_time_to_date_format(_date, _delay):
     # Combine the date and time strings
     datetime_str = f"{date_string} {_date}"
     # Parse the combined string into a datetime object
-    input_time = datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S")
+    spanish_input_time = datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S")
     # Convert to UTC+0 (UTC) and format to the desired string format
+    # Assume the French time as Europe/Paris timezone
+    madrid_zone = pytz.timezone('Europe/Madrid')
+    spanish_input_time = madrid_zone.localize(spanish_input_time)
+    # Convert to UTC+0 (UTC) and format to the desired string format
+    input_time = spanish_input_time.astimezone(pytz.utc)
     formatted_time = input_time.strftime("%Y-%m-%dT%H:%M:%S.00Z")
     return formatted_time
 
@@ -315,6 +320,6 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
     async for item in request_entries_with_timeout("https://forocoches.com/", max_oldness_seconds):
         yielded_items += 1
         yield item
-        logging.info(f"[forocoches.com] Found new post :\t {item.title}, posted at {item.created_at}, URL = {item.url}")
+        logging.info(f"[forocoches.com] Found new item :\t {item}")
         if yielded_items >= maximum_items_to_collect:
             break
