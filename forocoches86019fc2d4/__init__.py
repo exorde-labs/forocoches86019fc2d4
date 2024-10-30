@@ -1,40 +1,3 @@
-"""
-In this script we are going to collect data from Forocoches. All the latest posts on the forum are displayed here:
-
-https://forocoches.com/
-
-Times can be indicated in WEST UTC + 1 while on the topics themselves. On this page they seem to be indicated in UTC+1
-
-On the initial link look for:
-
-<tbody>
-    <tr/> --> the first <tr/> tag corresponds to the columns declaration, scrape all the rest
-    ...
-    <tr/>
-</tbody>
-
-Every <tr/> tag is composed like this:
-
-<tr>
-    <td/> --> useless for us
-    <td/> --> hour of post in UTC + 1 (Paris/Madrid Time)
-    <td>
-        <a/> --> the category to which belongs the post
-        <a/> --> the title of the post, the href tag redirects to the 1st page of the topic
-        <a/> --> [OPTIONAL] WHEN PRESENT, will redirect automatically to the LAST page of the topic
-    </td>
-</tr>
-
-Once on the link for the topic post last's page, look for these elements:
-
-<div class="postbit_wrapper">
-    <span class="postdate old"/> --> the post date of the item sous le format "Hoy HH:MM"
-    <tbody>
-        <div class="squote"/> --> [OPTIONAL] WHEN PRESENT, this means the post is quoting a previous post: IGNORE THIS TEXT
-        ... --> the rest is text that we want
-    </tbody>
-</div>
-"""
 import time
 import re
 import aiohttp
@@ -66,7 +29,7 @@ USER_AGENT_LIST = [
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.1 Safari/605.1.15',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.1 Safari/605.1.15'
 ]
-DEFAULT_OLDNESS_SECONDS = 15*60
+DEFAULT_OLDNESS_SECONDS = 1200
 DEFAULT_MAXIMUM_ITEMS = 25
 DEFAULT_MIN_POST_LENGTH = 10
 
@@ -229,7 +192,6 @@ def convert_date_and_time_to_date_format(_date, _delay):
     # Parse the combined string into a datetime object
     spanish_input_time = datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S")
     # Add 1 hour manually
-    spanish_input_time -= timedelta(hours=1)
     # Convert to UTC+0 (UTC) and format to the desired string format
     # Assume the French time as Europe/Paris timezone
     madrid_zone = pytz.timezone('Europe/Paris')
@@ -311,6 +273,10 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
 
     async for item in request_entries_with_timeout("https://forocoches.com/", max_oldness_seconds):
         yielded_items += 1
+
+        ######## MANUAL SUBSTRACT 1 HOUR TO THE DATE
+        item.created_at = CreatedAt((datetime.strptime(item.created_at, "%Y-%m-%dT%H:%M:%S.00Z") - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S.00Z"))
+        ######## MANUAL SUBSTRACT 1 HOUR TO THE DATE
         yield item
         logging.info(f"[forocoches.com] Found new item :\t {item}")
         if yielded_items >= maximum_items_to_collect:
