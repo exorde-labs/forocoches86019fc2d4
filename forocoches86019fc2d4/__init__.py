@@ -136,7 +136,7 @@ async def request_content_with_timeout(_url, _post_title, _max_age):
                             if f_content.strip() == "":  # post is empty (most likely an emoji, just skip it)
                                 continue
 
-                            content = _post_title + ". " + f_content
+                            content = f_content
                             link_to_post = post.find("a", {"onclick": True})["onclick"].lstrip("copyToClipboard(\"https://\"+window.location.hostname+\"").split("\"", 1)[0]
                             url = "https://forocoches.com/" + link_to_post
 
