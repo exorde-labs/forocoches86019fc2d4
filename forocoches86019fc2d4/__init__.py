@@ -229,7 +229,7 @@ def convert_date_and_time_to_date_format(_date, _delay):
     # Parse the combined string into a datetime object
     spanish_input_time = datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S")
     # Add 1 hour manually
-    spanish_input_time += timedelta(hours=1)
+    spanish_input_time -= timedelta(hours=1)
     # Convert to UTC+0 (UTC) and format to the desired string format
     # Assume the French time as Europe/Paris timezone
     madrid_zone = pytz.timezone('Europe/Paris')
