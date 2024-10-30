@@ -189,17 +189,14 @@ async def request_entries_with_timeout(_url, _max_age):
             title_list = []
             first_index = True
             for entry in entries:
-                logging.info(f"reading entry {entry}")
                 if first_index:
                     first_index = False
                     continue
                 tds = entry.findChildren("td", recursive=False)
                 if re.match(TIMESTAMP_PATTERN, tds[1].text):  # matches HH:MM format
-                    logging.info(f"retrieved timestamp {tds[1].text}")
                     is_fresh, delay = check_date_against_max_time(tds[1].text, _max_age, 2)
                     # respects our time window
                     if is_fresh:
-                        logging.info("check date passed")
                         a_elements = tds[2].findChildren("a", recursive=False)
                         if len(a_elements) == 3:  # we can skip directly to the last page
                             url = a_elements[2]["href"]  # the url to the last page of the topic
@@ -207,11 +204,8 @@ async def request_entries_with_timeout(_url, _max_age):
                             url = a_elements[1]["href"]
                         title_list.append(a_elements[1].text)
                         url_list.append(url)
-                    else:
-                        logging.info(f"passed due to item being too old ({delay}s)")
 
             async for item in parse_entry_for_elements(url_list, title_list, _max_age):
-                logging.info("YIELD NEW ITEM")
                 yield item
     except Exception as e:
         logging.exception("Error:" + str(e))
@@ -247,18 +241,14 @@ def convert_date_and_time_to_date_format(_date, _delay):
 
 
 def check_date_against_max_time(_date, _max_age, _time_delay):
-    logging.info(f"check_date_agaist_max_time date: {_date}")
     clean_date = convert_date_and_time_to_date_format(_date, _time_delay)
-    logging.info(f"clean date is = {clean_date}")
     return check_for_max_age_with_correct_format(clean_date, _max_age)
 
 
 def check_for_max_age_with_correct_format(_date, _max_age):
     date_to_check = datetime.strptime(_date, "%Y-%m-%dT%H:%M:%S.00Z")
-    logging.info(f"date_to_check: {date_to_check}")
     now_time = datetime.strptime(datetime.strftime(datetime.now(pytz.utc), "%Y-%m-%dT%H:%M:%S.00Z"),
                                  "%Y-%m-%dT%H:%M:%S.00Z")
-    logging.info(f"now time: {now_time}")
     if (now_time - date_to_check).total_seconds() <= _max_age:
         return (True, (now_time - date_to_check).total_seconds())
     else:
