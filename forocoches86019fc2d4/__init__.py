@@ -23,11 +23,6 @@ USER_AGENT_LIST = [
     'Mozilla/5.0 (iPad; CPU OS 12_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148',
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.1 Safari/605.1.15',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.1 Safari/605.1.15'
 ]
 DEFAULT_OLDNESS_SECONDS = 1200
 DEFAULT_MAXIMUM_ITEMS = 25
@@ -39,11 +34,11 @@ TIMESTAMP_PATTERN = r'^\d{2}:\d{2}$'  # made to match HH:MM format
 
 
 async def fetch_page(session, url):
-    async with session.get(url, headers={"User-Agent": random.choice(USER_AGENT_LIST)}, timeout=8.0) as response:
+    async with session.get(url, headers={"User-Agent": random.choice(USER_AGENT_LIST)}, timeout=5.0) as response:
         return await response.text()
 
 
-async def request_content_with_timeout(_url, _post_title, _max_age):
+async def request_content_with_timeout(_url, _max_age):
     """
     Returns all relevant information from the news post
     :param _post_title: the title of the post to which the comment is linked
@@ -66,10 +61,12 @@ async def request_content_with_timeout(_url, _post_title, _max_age):
     """
     try:
         async with aiohttp.ClientSession() as session:
+            logging.info(f"[Forocoches] Fetching thread page: {_url}")
             response = await fetch_page(session, _url)
             soup = BeautifulSoup(response, 'html.parser')
 
             posts = soup.find_all("div", {"class": "postbit_wrapper"})
+            logging.info(f"[Forocoches] Found {len(posts)} posts in the thread")
             for post in reversed(posts):  # loop backwards
                 date = post.find("span", {"class": "postdate old"}).text
                 simple_date = None
@@ -81,6 +78,8 @@ async def request_content_with_timeout(_url, _post_title, _max_age):
 
                     if re.match(TIMESTAMP_PATTERN, simple_date):
                         post_date = convert_date_and_time_to_date_format(simple_date, 1)
+                        # subtract 1 hour to the date
+                        post_date = (datetime.strptime(post_date, "%Y-%m-%dT%H:%M:%S.00Z") - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S.00Z")
                         if check_for_max_age_with_correct_format(post_date, _max_age):
                             # proceed to scraping the post
                             #f_content = post.find("div", {"class": "postbit_legacy_style"}).text
@@ -98,7 +97,13 @@ async def request_content_with_timeout(_url, _post_title, _max_age):
                             f_content = content_holder.lstrip(quoted_content)  # quoted content will be at the beginning
                             if f_content.strip() == "":  # post is empty (most likely an emoji, just skip it)
                                 continue
-
+                            
+                            # the post title is the text of the first h1 tag on the page
+                            try:
+                                _post_title = soup.find("h1").text
+                            except:
+                                #skip the post if the title is not found
+                                continue
                             content = f_content
                             link_to_post = post.find("a", {"onclick": True})["onclick"].lstrip("copyToClipboard(\"https://\"+window.location.hostname+\"").split("\"", 1)[0]
                             url = "https://forocoches.com/" + link_to_post
@@ -116,6 +121,36 @@ async def request_content_with_timeout(_url, _post_title, _max_age):
     except Exception as e:
         logging.exception("Error:" + str(e))
 
+async def parse_entries_with_timeout(_url, _max_age, max_nb_entries=20):
+    try:
+        logging.info(f"[Forocoches] Fetching forum page: {_url}")
+        async with aiohttp.ClientSession() as session:
+            response = await fetch_page(session, _url)
+            # sleep for a random time to avoid being banned
+            await asyncio.sleep(random.uniform(0.5, 1.5))
+            soup = BeautifulSoup(response, 'html.parser')
+            entries = soup.find("div", {"id": "container"})
+            if not entries:
+                return
+            # <a href="showthread.php?p=487201954#post487201954">
+            # only extract the URLs of the form showthread.php?p=487201954#post487201954
+            entries = entries.find_all("a", {"href": re.compile("showthread.php\?p=\d+#post\d+")})
+            entries_urls = []
+            # https://forocoches.com/foro/ + entry["href"]
+            for entry in entries:
+                entries_urls.append("https://forocoches.com/foro/" + entry["href"])
+            # remove entries_urls not of the exact form showthread.php?p=487201954#post487201954
+            # select first 5 entries of the list and resolve them with timeout
+            yielded_entries = 0
+            for entry_url in entries_urls[:5]:
+                async for item in request_content_with_timeout(entry_url, _max_age):
+                    yield item
+                    yielded_entries += 1
+                    if yielded_entries >= max_nb_entries:
+                        break
+            
+    except Exception as e:
+        logging.exception("Error:" + str(e))
 
 async def request_entries_with_timeout(_url, _max_age):
     """
@@ -123,53 +158,25 @@ async def request_entries_with_timeout(_url, _max_age):
     :param _max_age: the maximum age we will allow for the post in seconds
     :param _url: the url where we will find the latest posts
     :return: the card elements from which we can extract the relevant information
-
-    Look for:
-
-        <tbody>
-            <tr/> --> the first <tr/> tag corresponds to the columns declaration, scrape all the rest
-            ...
-            <tr/>
-        </tbody>
-
-    Every <tr/> tag is composed this way:
-        <tr>
-            <td/> --> useless for us
-            <td/> --> hour of post in UTC + 1 (Paris/Madrid Time)
-            <td>
-                <a/> --> the category to which belongs the post
-                <a/> --> the title of the post, the href tag redirects to the 1st page of the topic
-                <a/> --> [OPTIONAL] WHEN PRESENT, will redirect automatically to the LAST page of the topic
-            </td>
-        </tr>
     """
     try:
         async with aiohttp.ClientSession() as session:
             response = await fetch_page(session, _url)
             soup = BeautifulSoup(response, 'html.parser')
-            entries = soup.find("table", {"class": "cajasnews"}).parent.parent.parent.find_all("tr", recursive=False)[2].find("td", recursive=False).find("table", recursive=False).find_all("tr", recursive=False)
-            url_list = []
-            title_list = []
-            first_index = True
-            for entry in entries:
-                if first_index:
-                    first_index = False
-                    continue
-                tds = entry.findChildren("td", recursive=False)
-                if re.match(TIMESTAMP_PATTERN, tds[1].text):  # matches HH:MM format
-                    is_fresh, delay = check_date_against_max_time(tds[1].text, _max_age, 2)
-                    # respects our time window
-                    if is_fresh:
-                        a_elements = tds[2].findChildren("a", recursive=False)
-                        if len(a_elements) == 3:  # we can skip directly to the last page
-                            url = a_elements[2]["href"]  # the url to the last page of the topic
-                        else:
-                            url = a_elements[1]["href"]
-                        title_list.append(a_elements[1].text)
-                        url_list.append(url)
+            ## List a ll forums as <a href="forumdisplay.php?f=*">Forum Name</a>"
+            forums = soup.find_all("a", {"href": re.compile("forumdisplay.php\?f=\d+")})
 
-            async for item in parse_entry_for_elements(url_list, title_list, _max_age):
-                yield item
+            forums_urls = []
+            for forum in forums:
+                forum_url = "https://forocoches.com/foro/" + forum["href"]
+                forums_urls.append(forum_url)
+
+            selected_forums = ['https://forocoches.com/foro/forumdisplay.php?f=2'] + random.sample(forums_urls, 3)
+
+            # then resolve each forum with timeout, and parse the entries
+            for forum_url in selected_forums:
+                async for item in parse_entries_with_timeout(forum_url, _max_age):
+                    yield item
     except Exception as e:
         logging.exception("Error:" + str(e))
 
@@ -216,29 +223,6 @@ def check_for_max_age_with_correct_format(_date, _max_age):
     else:
         return (False, (now_time - date_to_check).total_seconds())
 
-
-async def parse_entry_for_elements(_url_list, _title_list, _max_age):
-    """
-    Parses every element to find the relevant links & titles to the connected forums
-    :param _url_list: The list of topic urls we need to collect from
-    :param _title_list: The list of topic titles linked to the url list
-    :param _max_age: The maximum age we will allow for the post in seconds
-    :return: All the parameters we need to return an Item instance
-
-    GET span.parent.find("a", {"class": "lien-jv topic-title stretched-link"})
-    """
-    try:
-        for i in range(0, len(_url_list)):
-            async for item in request_content_with_timeout("https://forocoches.com" + _url_list[i], _title_list[i],
-                                                           _max_age):
-                if item:
-                    yield item
-                else:
-                    break  # if this item was not in the time bracket that interests us, the following ones will not be either
-    except Exception as e:
-        logging.exception("Error:" + str(e))
-
-
 def read_parameters(parameters):
     # Check if parameters is not empty or None
     if parameters and isinstance(parameters, dict):
@@ -271,12 +255,8 @@ async def query(parameters: dict) -> AsyncGenerator[Item, None]:
     max_oldness_seconds, maximum_items_to_collect, min_post_length = read_parameters(parameters)
     logging.info(f"[forocoches.com] - Scraping ideas posted less than {max_oldness_seconds} seconds ago.")
 
-    async for item in request_entries_with_timeout("https://forocoches.com/", max_oldness_seconds):
+    async for item in request_entries_with_timeout("https://forocoches.com/foro/", max_oldness_seconds):
         yielded_items += 1
-
-        ######## MANUAL SUBSTRACT 1 HOUR TO THE DATE
-        item.created_at = CreatedAt((datetime.strptime(item.created_at, "%Y-%m-%dT%H:%M:%S.00Z") - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S.00Z"))
-        ######## MANUAL SUBSTRACT 1 HOUR TO THE DATE
         yield item
         logging.info(f"[forocoches.com] Found new item :\t {item}")
         if yielded_items >= maximum_items_to_collect:
